@@ -1,0 +1,156 @@
+---
+apiVersion: platform.confluent.io/v1beta1
+kind: Zookeeper
+metadata:
+  name: zookeeper
+  namespace: confluent
+spec:
+  replicas: 3
+  image:
+    application: confluentinc/cp-zookeeper:7.4.0
+    init: confluentinc/confluent-init-container:2.6.0
+  dataVolumeCapacity: 10Gi
+  logVolumeCapacity: 10Gi
+---
+apiVersion: platform.confluent.io/v1beta1
+kind: Kafka
+metadata:
+  name: kafka
+  namespace: confluent
+spec:
+  replicas: 3
+  image:
+    application: confluentinc/cp-server:7.4.0
+    init: confluentinc/confluent-init-container:2.6.0
+  dataVolumeCapacity: 100Gi
+  metricReporter:
+    enabled: true
+  dependencies:
+    zookeeper:
+      endpoint: zookeeper.confluent.svc.cluster.local:2181
+---
+apiVersion: platform.confluent.io/v1beta1
+kind: Connect
+metadata:
+  name: connect1
+  namespace: confluent
+spec:
+  replicas: 1
+  build:
+    type: onDemand
+    onDemand:
+      plugins:
+        locationType: confluentHub
+        confluentHub:
+          - name: kafka-connect-syslog
+            owner: confluentinc
+            version: 1.5.2
+  image:
+    application: confluentinc/cp-server-connect:7.4.0
+    init: confluentinc/confluent-init-container:2.6.0
+  dependencies:
+    kafka:
+      bootstrapEndpoint: kafka:9071
+---
+apiVersion: platform.confluent.io/v1beta1
+kind: Connect
+metadata:
+  name: connect2
+  namespace: confluent
+spec:
+  replicas: 1
+  build:
+    type: onDemand
+    onDemand:
+      plugins:
+        locationType: confluentHub
+        confluentHub:
+          - name: kafka-connect-syslog
+            owner: confluentinc
+            version: 1.5.2
+  image:
+    application: confluentinc/cp-server-connect:7.4.0
+    init: confluentinc/confluent-init-container:2.6.0
+  dependencies:
+    kafka:
+      bootstrapEndpoint: kafka:9071
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: syslog-service
+spec:
+  type: LoadBalancer
+  ports:
+    - protocol: TCP
+      port: 5454
+      targetPort: 5454
+  selector:
+    platform.confluent.io/type: connect
+---
+apiVersion: platform.confluent.io/v1beta1
+kind: ControlCenter
+metadata:
+  name: controlcenter
+  namespace: confluent
+spec:
+  replicas: 1
+  authentication:
+    type: basic
+    basic:
+      secretRef: control-center-user
+  image:
+    application: confluentinc/cp-enterprise-control-center:7.4.0
+    init: confluentinc/confluent-init-container:2.6.0
+  dataVolumeCapacity: 10Gi
+  externalAccess:
+    type: loadBalancer
+    loadBalancer: 
+      domain: my.domain
+      prefix: rb-c3
+  dependencies:
+    connect:
+    - name: connect1
+      url: http://connect1.confluent.svc.cluster.local:8083
+    - name: connect2
+      url: http://connect2.confluent.svc.cluster.local:8083
+---
+apiVersion: platform.confluent.io/v1beta1
+kind: KafkaTopic
+metadata:
+  name: "test-syslog"
+spec:
+  replicas: 3
+  partitionCount: 1
+  kafkaClusterRef:
+    name: kafka
+---
+apiVersion: platform.confluent.io/v1beta1
+kind: Connector
+metadata:
+  name: syslog-connector1
+spec:
+  taskMax: 1
+  class: "io.confluent.connect.syslog.SyslogSourceConnector"
+  connectClusterRef:
+    name: connect1
+  configs:
+    syslog.listener: "TCP"
+    syslog.port: "5454"
+    topic: "test-syslog"
+---
+apiVersion: platform.confluent.io/v1beta1
+kind: Connector
+metadata:
+  name: syslog-connector2
+spec:
+  taskMax: 1
+  class: "io.confluent.connect.syslog.SyslogSourceConnector"
+  connectClusterRef:
+    name: connect2
+  configs:
+    syslog.listener: "TCP"
+    syslog.port: "5454"
+    topic: "test-syslog"
+---
+
